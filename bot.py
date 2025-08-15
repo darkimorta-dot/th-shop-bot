@@ -152,7 +152,7 @@ async def init_db():
         await db.executescript(INIT_SQL)
         await db.commit()
 
-# ========= DB QUERIES =========
+# ========= DB QUERИИ =========
 async def add_product(p: Product) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
@@ -163,9 +163,10 @@ async def add_product(p: Product) -> int:
         await db.commit()
         if cur.lastrowid:
             return cur.lastrowid
-        cur2 = await db.execute("""
-            SELECT id FROM products WHERE source_chat_id IS ? AND source_msg_id IS ?
-        """, (p.source_chat_id, p.source_msg_id))
+        cur2 = await db.execute(
+            "SELECT id FROM products WHERE source_chat_id IS ? AND source_msg_id IS ?",
+            (p.source_chat_id, p.source_msg_id)
+        )
         row = await cur2.fetchone()
         return row[0] if row else 0
 
@@ -493,7 +494,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
         return
 
-    # режим обратной связи: сохраняем следующее сообщение
+    # режим обратной связи
     if context.user_data.get("awaiting_feedback"):
         msg = update.message.text
         await update.message.reply_text("Спасибо! Передал админу.")
@@ -565,7 +566,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sel_cat:
         brands = await get_brands_by_category(sel_cat)
         if txt in brands:
-            context.user_data["selected_brand"] = txt
             pf = context.user_data.get("price_from")
             pt = context.user_data.get("price_to")
             sz = context.user_data.get("size_query")
@@ -575,6 +575,53 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     return await start(update, context)
+
+# ========= IMPORT ИЗ ПЕРЕСЫЛКИ =========
+async def import_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != ChatType.PRIVATE:
+        return
+    msg = update.message
+    caption = msg.caption or msg.text or ""
+    tags = parse_hashtags(caption)
+    category = tags[0] if len(tags) >= 1 else "Общее"
+    brand = tags[1] if len(tags) >= 2 else "NoBrand"
+    title = first_line(caption)
+    price = parse_price(caption)
+    sizes = parse_sizes(caption)
+    photo_file_id = msg.photo[-1].file_id if msg.photo else None
+    source_chat_id = msg.forward_from_chat.id if msg.forward_from_chat else None
+    source_msg_id = msg.forward_from_message_id if msg.forward_from_message_id else None
+
+    p = Product(0, title, price or 0, photo_file_id, caption, category, brand, sizes, source_chat_id, source_msg_id)
+    pid = await add_product(p)
+    cats = await get_categories()
+    await msg.reply_text(
+        f"✅ Товар добавлен (id={pid}).\nКатегория: {category} • Бренд: {brand}\n"
+        f"Цена: {price_fmt(p.price) if p.price else '—'}\nРазмеры: {sizes or '—'}\n"
+        f"Откройте категорию → бренд, чтобы увидеть карточку.",
+        reply_markup=build_categories_kb(cats)
+    )
+
+# ========= АВТОИМПОРТ ИЗ КАНАЛА =========
+async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.channel_post
+    if not msg:
+        return
+    caption = msg.caption or msg.text or ""
+    if not caption and not msg.photo:
+        return
+    tags = parse_hashtags(caption)
+    category = tags[0] if len(tags) >= 1 else "Общее"
+    brand = tags[1] if len(tags) >= 2 else "NoBrand"
+    title = first_line(caption)
+    price = parse_price(caption) or 0
+    sizes = parse_sizes(caption)
+    photo_file_id = msg.photo[-1].file_id if msg.photo else None
+
+    p = Product(0, title, price, photo_file_id, caption, category, brand, sizes, msg.chat_id, msg.message_id)
+    pid = await add_product(p)
+    if ADMIN_CHAT_ID:
+        await context.bot.send_message(int(ADMIN_CHAT_ID), f"Импортирован пост из канала как товар id={pid} ({category}/{brand}).")
 
 # ========= CSV =========
 async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
