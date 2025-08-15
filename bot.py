@@ -34,8 +34,8 @@ BTN_ORDERS = "🧾 Мои покупки"
 BTN_FEEDBACK = "✉️ Обратная связь"
 BTN_BACK_TO_CATS = "⬅️ Назад в категории"
 
-ASK_FEEDBACK = 1  # состояние диалога обратной связи
-IMPORT_WAIT_FILE = 1001  # состояние для импорта CSV
+ASK_FEEDBACK = 1
+IMPORT_WAIT_FILE = 1001
 
 # ========= HELPERS =========
 def price_fmt(p: int) -> str:
@@ -43,13 +43,9 @@ def price_fmt(p: int) -> str:
     return f"{rub:,}.{kop:02d} ₽".replace(",", " ")
 
 def parse_price(text: str) -> Optional[int]:
-    """
-    Возвращает цену в копейках (int) или None.
-    Ищет варианты: "4 990 ₽", "4990 руб", "Цена: 5.990", "5 990р"
-    """
     if not text:
         return None
-    t = text.replace("\u00a0", " ")  # неразрывные пробелы
+    t = text.replace("\u00a0", " ")
     patterns = [
         r"(?:цена[:\s]*)?(\d[\d\s\.]{1,12})\s?(?:₽|руб|руб\.|р)\b",
         r"\b(\d[\d\s\.]{1,12})\s?(?:₽|руб|руб\.|р)\b",
@@ -60,7 +56,6 @@ def parse_price(text: str) -> Optional[int]:
             num = re.sub(r"[^\d]", "", m.group(1))
             if num.isdigit():
                 return int(num) * 100
-    # чистое число на строке
     for line in t.splitlines():
         if re.fullmatch(r"\s*\d[\d\s\.]{1,12}\s*", line.strip()):
             num = re.sub(r"[^\d]", "", line)
@@ -69,19 +64,13 @@ def parse_price(text: str) -> Optional[int]:
     return None
 
 def parse_sizes(text: str) -> Optional[str]:
-    """
-    Ищем "Размеры: S, M, L" / "sizes: 42/44/46" и т.п.
-    Возвращаем исходную строку размеров (напр. "S, M, L")
-    """
     if not text:
         return None
     t = text.replace("\u00a0", " ")
     m = re.search(r"(?:размеры?|sizes?)\s*[:\-–]\s*([A-Za-zА-Яа-я0-9 ,\/\-]+)", t, flags=re.IGNORECASE)
     if m:
-        sizes = m.group(1).strip()
-        sizes = re.sub(r"\s+", " ", sizes)
+        sizes = re.sub(r"\s+", " ", m.group(1).strip())
         return sizes[:120]
-    # строка только с размерами
     for line in t.splitlines():
         if re.fullmatch(r"\s*(?:[A-Za-zА-Яа-я0-9]{1,3}[\s,\/\-]+){1,10}[A-Za-zА-Яа-я0-9]{1,3}\s*", line.strip()):
             return line.strip()[:120]
@@ -201,25 +190,19 @@ async def list_products(category: Optional[str]=None, brand: Optional[str]=None,
     params: Tuple = ()
     where = []
     if category:
-        where.append("category=?")
-        params += (category,)
+        where.append("category=?"); params += (category,)
     if brand:
-        where.append("brand=?")
-        params += (brand,)
+        where.append("brand=?"); params += (brand,)
     if price_from is not None:
-        where.append("price>=?")
-        params += (price_from,)
+        where.append("price>=?"); params += (price_from,)
     if price_to is not None:
-        where.append("price<=?")
-        params += (price_to,)
+        where.append("price<=?"); params += (price_to,)
     if size_query:
-        where.append("sizes LIKE ?")
-        params += (f"%{size_query}%",)
+        where.append("sizes LIKE ?"); params += (f"%{size_query}%",)
     if where:
         q += " WHERE " + " AND ".join(where)
     q += " ORDER BY id DESC LIMIT ? OFFSET ?"
     params += (limit, offset)
-
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(q, params)
         rows = await cur.fetchall()
@@ -321,7 +304,7 @@ def build_brands_kb(brands: List[str]) -> ReplyKeyboardMarkup:
     for i in range(0, len(brands), 2):
         row = [KeyboardButton(brands[i])]
         if i + 1 < len(brands):
-            row.append(KeyboardButton(brands[i+1])]
+            row.append(KeyboardButton(brands[i+1]))
         rows.append(row)
     rows.append([KeyboardButton(BTN_BACK_TO_CATS)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -333,9 +316,7 @@ def product_inline_kb(pid: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🛒 Купить", callback_data=f"buy:{pid}"),
             InlineKeyboardButton("👗 В гардероб", callback_data=f"wardrobe:{pid}")
         ],
-        [
-            InlineKeyboardButton("👤 Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")
-        ],
+        [InlineKeyboardButton("👤 Написать менеджеру", url=f"https://t.me/{MANAGER_USERNAME}")],
     ]
     if dl:
         rows.append([InlineKeyboardButton("🔗 Открыть в боте", url=dl)])
@@ -343,7 +324,6 @@ def product_inline_kb(pid: int) -> InlineKeyboardMarkup:
 
 # ========= VIEWS =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # deep-link: /start prd_123
     args = context.args
     if args and len(args) >= 1 and args[0].startswith("prd_"):
         try:
@@ -352,9 +332,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pr:
                 caption = f"*{pr.title}*\n{price_fmt(pr.price)}\n{(pr.descr or '')[:800]}"
                 if pr.photo_file_id:
-                    await update.message.reply_photo(pr.photo_file_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id))
+                    await update.message.reply_photo(
+                        pr.photo_file_id, caption=caption,
+                        parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id)
+                    )
                 else:
-                    await update.message.reply_text(caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id))
+                    await update.message.reply_text(
+                        caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id)
+                    )
         except Exception:
             pass
 
@@ -371,7 +356,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_categories_kb(cats)
         )
     if not ADMIN_CHAT_ID and update.message:
-        await update.message.reply_text("ℹ️ Укажи ADMIN_CHAT_ID в .env, чтобы получать обратную связь.")
+        await update.message.reply_text("ℹ️ Укажи ADMIN_CHAT_ID в переменных окружения, чтобы получать обратную связь.")
 
 async def show_products_by_brand(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, brand: str,
                                  offset=0, price_from=None, price_to=None, size_query=None):
@@ -386,10 +371,14 @@ async def show_products_by_brand(update: Update, context: ContextTypes.DEFAULT_T
             caption += f"\nРазмеры: {pr.sizes}"
         caption += f"\n\n{(pr.descr or '')[:500]}"
         if pr.photo_file_id:
-            await update.message.reply_photo(pr.photo_file_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id))
+            await update.message.reply_photo(
+                pr.photo_file_id, caption=caption,
+                parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id)
+            )
         else:
-            await update.message.reply_text(caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id))
-    # пагинация
+            await update.message.reply_text(
+                caption, parse_mode=ParseMode.MARKDOWN, reply_markup=product_inline_kb(pr.id)
+            )
     await update.message.reply_text(
         "Показать ещё ▶️",
         reply_markup=InlineKeyboardMarkup(
@@ -415,8 +404,10 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         buttons.insert(0, [InlineKeyboardButton("✅ Оформить заказ", callback_data="checkout")])
     kb = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("Корзина:\n" + "\n".join(lines) + f"\n\nИтого: *{price_fmt(total)}*",
-                                    parse_mode=ParseMode.MARKDOWN, reply_markup=kb)
+    await update.message.reply_text(
+        "Корзина:\n" + "\n".join(lines) + f"\n\nИтого: *{price_fmt(total)}*",
+        parse_mode=ParseMode.MARKDOWN, reply_markup=kb
+    )
 
 async def show_wardrobe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
@@ -468,13 +459,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("Корзина пуста.")
             return
         order_id, total = res
-        await q.message.reply_text(f"Заказ #{order_id} оформлен на сумму {price_fmt(total)} ✅\n"
-                                   f"Статус: NEW. Мы свяжемся с вами для оплаты/доставки.")
+        await q.message.reply_text(
+            f"Заказ #{order_id} оформлен на сумму {price_fmt(total)} ✅\n"
+            f"Статус: NEW. Мы свяжемся с вами для оплаты/доставки."
+        )
         if ADMIN_CHAT_ID:
             await context.bot.send_message(
                 int(ADMIN_CHAT_ID),
-                f"Новый заказ #{order_id} от @{q.from_user.username or q.from_user.id} "
-                f"на сумму {price_fmt(total)}"
+                f"Новый заказ #{order_id} от @{q.from_user.username or q.from_user.id} на сумму {price_fmt(total)}"
             )
 
     elif data == "checkout_pay":
@@ -483,17 +475,14 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("Корзина пуста.")
             return
         total = sum(price * qty for _, _, price, qty in rows)
-        title = "Оплата заказа"
-        description = "Оплата товаров из корзины"
-        prices = [LabeledPrice(label="Товары", amount=total)]
         await context.bot.send_invoice(
             chat_id=q.message.chat_id,
-            title=title,
-            description=description,
+            title="Оплата заказа",
+            description="Оплата товаров из корзины",
             payload=f"pay_{q.from_user.id}",
             provider_token=PAYMENT_PROVIDER_TOKEN,
             currency="RUB",
-            prices=prices
+            prices=[LabeledPrice(label="Товары", amount=total)]
         )
 
     elif data == "clearcart":
@@ -503,7 +492,7 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========= TEXT ROUTER =========
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
-        return  # только личка
+        return
 
     txt = update.message.text
 
@@ -529,7 +518,9 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pt = int(parts[2]) * 100 if len(parts) > 2 and parts[2].isdigit() else None
         context.user_data["price_from"] = pf
         context.user_data["price_to"] = pt
-        await update.message.reply_text(f"Фильтр по цене установлен: от {parts[1] if pf else '-'} до {parts[2] if pt else '-'} ₽")
+        await update.message.reply_text(
+            f"Фильтр по цене установлен: от {parts[1] if pf else '-'} до {parts[2] if pt else '-'} ₽"
+        )
         return
     if txt.startswith("/size"):
         parts = txt.split(maxsplit=1)
@@ -537,7 +528,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Фильтр по размеру: {context.user_data.get('size_query') or '—'}")
         return
     if txt.startswith("/clear_filters"):
-        for k in ("price_from","price_to","size_query"):
+        for k in ("price_from", "price_to", "size_query"):
             context.user_data.pop(k, None)
         await update.message.reply_text("Фильтры очищены.")
         return
@@ -547,10 +538,14 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["selected_category"] = txt
         brands = await get_brands_by_category(txt)
         if not brands:
-            return await update.message.reply_text("В этой категории пока нет брендов.",
-                                                   reply_markup=build_categories_kb(cats))
-        return await update.message.reply_text(f"Категория {txt}. Выберите бренд:",
-                                               reply_markup=build_brands_kb(brands))
+            return await update.message.reply_text(
+                "В этой категории пока нет брендов.",
+                reply_markup=build_categories_kb(cats)
+            )
+        return await update.message.reply_text(
+            f"Категория {txt}. Выберите бренд:",
+            reply_markup=build_brands_kb(brands)
+        )
 
     sel_cat = context.user_data.get("selected_category")
     if sel_cat:
@@ -560,28 +555,27 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pf = context.user_data.get("price_from")
             pt = context.user_data.get("price_to")
             sz = context.user_data.get("size_query")
-            return await show_products_by_brand(update, context, category=sel_cat, brand=txt, offset=0,
-                                                price_from=pf, price_to=pt, size_query=sz)
+            return await show_products_by_brand(
+                update, context, category=sel_cat, brand=txt, offset=0,
+                price_from=pf, price_to=pt, size_query=sz
+            )
 
     return await start(update, context)
 
-# ========= FEEDBACK DIALOG =========
+# ========= FEEDBACK =========
 async def feedback_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     await update.message.reply_text("Спасибо! Передал админу.")
     if ADMIN_CHAT_ID:
         u = update.effective_user
-        await context.bot.send_message(
-            int(ADMIN_CHAT_ID),
-            f"Обратная связь от @{u.username or u.id}:\n\n{msg}"
-        )
+        await context.bot.send_message(int(ADMIN_CHAT_ID), f"Обратная связь от @{u.username or u.id}:\n\n{msg}")
     return ConversationHandler.END
 
 async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Отменено.")
     return ConversationHandler.END
 
-# ========= IMPORT FROM FORWARDED POSTS =========
+# ========= IMPORTS FROM POSTS =========
 async def import_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
         return
@@ -607,7 +601,6 @@ async def import_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=build_categories_kb(cats)
     )
 
-# ========= AUTO IMPORT FROM CHANNEL POSTS =========
 async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post
     if not msg:
@@ -628,19 +621,17 @@ async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_CHAT_ID:
         await context.bot.send_message(int(ADMIN_CHAT_ID), f"Импортирован пост из канала как товар id={pid} ({category}/{brand}).")
 
-# ========= CSV EXPORT / IMPORT =========
+# ========= CSV =========
 async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_CHAT_ID):
         return
     path = "catalog_export.csv"
     header = ["id","title","price_rub","photo_file_id","descr","category","brand","sizes","source_chat_id","source_msg_id"]
     async with aiosqlite.connect(DB_PATH) as db, open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
+        writer = csv.writer(f); writer.writerow(header)
         async with db.execute("SELECT id,title,price,photo_file_id,descr,category,brand,sizes,source_chat_id,source_msg_id FROM products ORDER BY id DESC") as cur:
             async for row in cur:
-                row = list(row)
-                row[2] = row[2] / 100
+                row = list(row); row[2] = row[2] / 100
                 writer.writerow(row)
     await update.message.reply_document(InputFile(path), filename="catalog_export.csv", caption="Экспорт каталога")
 
@@ -678,7 +669,7 @@ async def import_csv_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Импорт завершён. Добавлено товаров: {cnt}")
     return ConversationHandler.END
 
-# ========= PAYMENTS HANDLERS =========
+# ========= PAYMENTS =========
 async def precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.pre_checkout_query
     await query.answer(ok=True)
@@ -695,7 +686,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
 # ========= MAIN =========
 async def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не задан. Создай .env с BOT_TOKEN=...")
+        raise RuntimeError("BOT_TOKEN не задан. Добавь его в переменные окружения.")
     app: Application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     await init_db()
@@ -732,7 +723,7 @@ async def main():
     # Навигация (только личка)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
-    # Автоимпорт из каналов (PTB 21.4 — через фильтр ChatType.CHANNEL)
+    # Автоимпорт из каналов (PTB 21.4)
     app.add_handler(MessageHandler(
         (filters.PHOTO | filters.TEXT) & filters.ChatType.CHANNEL,
         on_channel_post
