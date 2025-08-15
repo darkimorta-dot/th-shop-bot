@@ -15,7 +15,7 @@ from telegram.constants import ParseMode, ChatType
 from telegram.ext import (
     ApplicationBuilder, Application, CommandHandler, ContextTypes,
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters,
-    PreCheckoutQueryHandler, ChannelPostHandler
+    PreCheckoutQueryHandler
 )
 
 # ================== ENV / CONST ==================
@@ -175,7 +175,6 @@ async def add_product(p: Product) -> int:
         await db.commit()
         if cur.lastrowid:
             return cur.lastrowid
-        # Если IGNORE сработал (дубликат source), достанем id
         cur2 = await db.execute("""
             SELECT id FROM products WHERE source_chat_id IS ? AND source_msg_id IS ?
         """, (p.source_chat_id, p.source_msg_id))
@@ -322,7 +321,7 @@ def build_brands_kb(brands: List[str]) -> ReplyKeyboardMarkup:
     for i in range(0, len(brands), 2):
         row = [KeyboardButton(brands[i])]
         if i + 1 < len(brands):
-            row.append(KeyboardButton(brands[i+1]))
+            row.append(KeyboardButton(brands[i+1])]
         rows.append(row)
     rows.append([KeyboardButton(BTN_BACK_TO_CATS)])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -394,7 +393,7 @@ async def show_products_by_brand(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(
         "Показать ещё ▶️",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Ещё", callback_data=f"morebrand:{category}:{brand}:{offset+6}")] ]
+            [[InlineKeyboardButton("Ещё", callback_data=f"morebrand:{category}:{brand}:{offset+6}")]]
         )
     )
 
@@ -479,7 +478,6 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     elif data == "checkout_pay":
-        # платеж через Telegram Payments
         rows = await get_cart(q.from_user.id)
         if not rows:
             await q.message.reply_text("Корзина пуста.")
@@ -505,11 +503,10 @@ async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========= TEXT ROUTER =========
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
-        return  # работаем только в личке
+        return  # только личка
 
     txt = update.message.text
 
-    # сервисные кнопки
     if txt == BTN_CART:
         return await show_cart(update, context)
     if txt == BTN_WARDROBE:
@@ -520,14 +517,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Напишите сообщение. Отправлю админу. Отмена — /cancel")
         return ASK_FEEDBACK
 
-    # навигация «назад»
     if txt == BTN_BACK_TO_CATS:
         context.user_data.pop("selected_category", None)
         context.user_data.pop("selected_brand", None)
         cats = await get_categories()
         return await update.message.reply_text("Выберите категорию:", reply_markup=build_categories_kb(cats))
 
-    # фильтры командами: /filter 1000 5000, /size L, /clear_filters
     if txt.startswith("/filter"):
         parts = txt.split()
         pf = int(parts[1]) * 100 if len(parts) > 1 and parts[1].isdigit() else None
@@ -547,7 +542,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Фильтры очищены.")
         return
 
-    # выбор категории
     cats = await get_categories()
     if txt in cats:
         context.user_data["selected_category"] = txt
@@ -558,7 +552,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text(f"Категория {txt}. Выберите бренд:",
                                                reply_markup=build_brands_kb(brands))
 
-    # выбор бренда (когда категория уже выбрана)
     sel_cat = context.user_data.get("selected_category")
     if sel_cat:
         brands = await get_brands_by_category(sel_cat)
@@ -570,7 +563,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await show_products_by_brand(update, context, category=sel_cat, brand=txt, offset=0,
                                                 price_from=pf, price_to=pt, size_query=sz)
 
-    # дефолт — показать меню
     return await start(update, context)
 
 # ========= FEEDBACK DIALOG =========
@@ -591,92 +583,47 @@ async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========= IMPORT FROM FORWARDED POSTS =========
 async def import_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Пересылай боту пост из канала (фото + подпись/текст).
-    Возьмём: title (1-я строка), price, category/brand из #хэштегов,
-    sizes, описание, фото по file_id. Сохраним как товар.
-    """
     if update.effective_chat.type != ChatType.PRIVATE:
         return
-
     msg = update.message
     caption = msg.caption or msg.text or ""
     tags = parse_hashtags(caption)
     category = tags[0] if len(tags) >= 1 else "Общее"
     brand = tags[1] if len(tags) >= 2 else "NoBrand"
-
     title = first_line(caption)
     price = parse_price(caption)
     sizes = parse_sizes(caption)
+    photo_file_id = msg.photo[-1].file_id if msg.photo else None
+    source_chat_id = msg.forward_from_chat.id if msg.forward_from_chat else None
+    source_msg_id = msg.forward_from_message_id if msg.forward_from_message_id else None
 
-    photo_file_id = None
-    if msg.photo:
-        photo_file_id = msg.photo[-1].file_id
-
-    source_chat_id = None
-    source_msg_id = None
-    if msg.forward_from_chat and msg.forward_from_chat.id:
-        source_chat_id = msg.forward_from_chat.id
-        if msg.forward_from_message_id:
-            source_msg_id = msg.forward_from_message_id
-
-    p = Product(
-        id=0,
-        title=title,
-        price=price if price is not None else 0,
-        photo_file_id=photo_file_id,
-        descr=caption,
-        category=category,
-        brand=brand,
-        sizes=sizes,
-        source_chat_id=source_chat_id,
-        source_msg_id=source_msg_id
-    )
+    p = Product(0, title, price or 0, photo_file_id, caption, category, brand, sizes, source_chat_id, source_msg_id)
     pid = await add_product(p)
-
     cats = await get_categories()
     await msg.reply_text(
-        f"✅ Товар добавлен (id={pid}).\n"
-        f"Категория: {category} • Бренд: {brand}\n"
-        f"Цена: {price_fmt(p.price) if p.price else '—'}\n"
-        f"Размеры: {sizes or '—'}\n"
+        f"✅ Товар добавлен (id={pid}).\nКатегория: {category} • Бренд: {brand}\n"
+        f"Цена: {price_fmt(p.price) if p.price else '—'}\nРазмеры: {sizes or '—'}\n"
         f"Откройте категорию → бренд, чтобы увидеть карточку.",
         reply_markup=build_categories_kb(cats)
     )
 
 # ========= AUTO IMPORT FROM CHANNEL POSTS =========
 async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Срабатывает, если бот добавлен админом канала. Импортируем новые посты автоматически."""
     msg = update.channel_post
     if not msg:
         return
     caption = msg.caption or msg.text or ""
     if not caption and not msg.photo:
-        return  # нечего парсить
-
+        return
     tags = parse_hashtags(caption)
     category = tags[0] if len(tags) >= 1 else "Общее"
     brand = tags[1] if len(tags) >= 2 else "NoBrand"
     title = first_line(caption)
     price = parse_price(caption) or 0
     sizes = parse_sizes(caption)
+    photo_file_id = msg.photo[-1].file_id if msg.photo else None
 
-    photo_file_id = None
-    if msg.photo:
-        photo_file_id = msg.photo[-1].file_id
-
-    p = Product(
-        id=0,
-        title=title,
-        price=price,
-        photo_file_id=photo_file_id,
-        descr=caption,
-        category=category,
-        brand=brand,
-        sizes=sizes,
-        source_chat_id=msg.chat_id,
-        source_msg_id=msg.message_id
-    )
+    p = Product(0, title, price, photo_file_id, caption, category, brand, sizes, msg.chat_id, msg.message_id)
     pid = await add_product(p)
     if ADMIN_CHAT_ID:
         await context.bot.send_message(int(ADMIN_CHAT_ID), f"Импортирован пост из канала как товар id={pid} ({category}/{brand}).")
@@ -693,7 +640,7 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with db.execute("SELECT id,title,price,photo_file_id,descr,category,brand,sizes,source_chat_id,source_msg_id FROM products ORDER BY id DESC") as cur:
             async for row in cur:
                 row = list(row)
-                row[2] = row[2] / 100  # price в рублях
+                row[2] = row[2] / 100
                 writer.writerow(row)
     await update.message.reply_document(InputFile(path), filename="catalog_export.csv", caption="Экспорт каталога")
 
@@ -785,8 +732,11 @@ async def main():
     # Навигация (только личка)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
-    # Автоимпорт из канала (включится, когда бот будет админом)
-    app.add_handler(ChannelPostHandler(on_channel_post, block=False))
+    # Автоимпорт из каналов (PTB 21.4 — через фильтр ChatType.CHANNEL)
+    app.add_handler(MessageHandler(
+        (filters.PHOTO | filters.TEXT) & filters.ChatType.CHANNEL,
+        on_channel_post
+    ))
 
     # Платежи
     if PAYMENT_PROVIDER_TOKEN:
