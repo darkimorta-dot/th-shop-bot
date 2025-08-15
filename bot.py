@@ -23,7 +23,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")  # optional
-MANAGER_USERNAME = os.getenv("MANAGER_USERNAME", "Granku56")   # можно переопределить в .env
+MANAGER_USERNAME = os.getenv("MANAGER_USERNAME", "Granku56")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")  # без @, для deep-link кнопки
 
 DB_PATH = "store.db"
@@ -683,7 +683,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     if ADMIN_CHAT_ID:
         await context.bot.send_message(int(ADMIN_CHAT_ID), f"Оплачен заказ #{order_id} от @{update.effective_user.username or update.effective_user.id} на сумму {price_fmt(total)}")
 
-# ========= MAIN =========
+# ========= MAIN (без проблем с event loop) =========
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан. Добавь его в переменные окружения.")
@@ -705,14 +705,13 @@ async def main():
     # Колбэки
     app.add_handler(CallbackQueryHandler(on_cb))
 
-    # Диалог обратной связи
-    feedback_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Text(BTN_FEEDBACK), on_text)],
+    # Диалог обратной связи (кнопка)
+    app.add_handler(ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(f"^{re.escape(BTN_FEEDBACK)}$"), on_text)],
         states={ASK_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_save)]},
         fallbacks=[CommandHandler("cancel", feedback_cancel)],
         allow_reentry=True
-    )
-    app.add_handler(feedback_conv)
+    ))
 
     # Импорт из пересланных постов (только личка)
     app.add_handler(MessageHandler(
@@ -723,7 +722,7 @@ async def main():
     # Навигация (только личка)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
-    # Автоимпорт из каналов (PTB 21.4)
+    # Автоимпорт из каналов
     app.add_handler(MessageHandler(
         (filters.PHOTO | filters.TEXT) & filters.ChatType.CHANNEL,
         on_channel_post
@@ -734,8 +733,17 @@ async def main():
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
+    # Явное управление жизненным циклом — без падений event loop
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
     print("Bot started. Press Ctrl+C to stop.")
-    await app.run_polling()
+    try:
+        await app.updater.idle()
+    finally:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())
