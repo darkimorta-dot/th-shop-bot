@@ -14,8 +14,8 @@ from telegram import (
 from telegram.constants import ParseMode, ChatType
 from telegram.ext import (
     ApplicationBuilder, Application, CommandHandler, ContextTypes,
-    MessageHandler, CallbackQueryHandler, ConversationHandler, filters,
-    PreCheckoutQueryHandler
+    MessageHandler, CallbackQueryHandler, filters, PreCheckoutQueryHandler,
+    ConversationHandler
 )
 
 # ================== ENV / CONST ==================
@@ -24,7 +24,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN")  # optional
 MANAGER_USERNAME = os.getenv("MANAGER_USERNAME", "Granku56")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "")  # без @, для deep-link кнопки
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")  # без @, для deep-link
 
 DB_PATH = "store.db"
 
@@ -34,7 +34,6 @@ BTN_ORDERS = "🧾 Мои покупки"
 BTN_FEEDBACK = "✉️ Обратная связь"
 BTN_BACK_TO_CATS = "⬅️ Назад в категории"
 
-ASK_FEEDBACK = 1
 IMPORT_WAIT_FILE = 1001
 
 # ========= HELPERS =========
@@ -494,6 +493,16 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != ChatType.PRIVATE:
         return
 
+    # режим обратной связи: сохраняем следующее сообщение
+    if context.user_data.get("awaiting_feedback"):
+        msg = update.message.text
+        await update.message.reply_text("Спасибо! Передал админу.")
+        if ADMIN_CHAT_ID:
+            u = update.effective_user
+            await context.bot.send_message(int(ADMIN_CHAT_ID), f"Обратная связь от @{u.username or u.id}:\n\n{msg}")
+        context.user_data["awaiting_feedback"] = False
+        return
+
     txt = update.message.text
 
     if txt == BTN_CART:
@@ -503,8 +512,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if txt == BTN_ORDERS:
         return await show_orders(update, context)
     if txt == BTN_FEEDBACK:
-        await update.message.reply_text("Напишите сообщение. Отправлю админу. Отмена — /cancel")
-        return ASK_FEEDBACK
+        context.user_data["awaiting_feedback"] = True
+        await update.message.reply_text("Напишите сообщение. Отмена — /cancel")
+        return
+    if txt == "/cancel":
+        context.user_data["awaiting_feedback"] = False
+        await update.message.reply_text("Отменено.")
+        return
 
     if txt == BTN_BACK_TO_CATS:
         context.user_data.pop("selected_category", None)
@@ -561,65 +575,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
     return await start(update, context)
-
-# ========= FEEDBACK =========
-async def feedback_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text
-    await update.message.reply_text("Спасибо! Передал админу.")
-    if ADMIN_CHAT_ID:
-        u = update.effective_user
-        await context.bot.send_message(int(ADMIN_CHAT_ID), f"Обратная связь от @{u.username or u.id}:\n\n{msg}")
-    return ConversationHandler.END
-
-async def feedback_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Отменено.")
-    return ConversationHandler.END
-
-# ========= IMPORTS FROM POSTS =========
-async def import_from_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type != ChatType.PRIVATE:
-        return
-    msg = update.message
-    caption = msg.caption or msg.text or ""
-    tags = parse_hashtags(caption)
-    category = tags[0] if len(tags) >= 1 else "Общее"
-    brand = tags[1] if len(tags) >= 2 else "NoBrand"
-    title = first_line(caption)
-    price = parse_price(caption)
-    sizes = parse_sizes(caption)
-    photo_file_id = msg.photo[-1].file_id if msg.photo else None
-    source_chat_id = msg.forward_from_chat.id if msg.forward_from_chat else None
-    source_msg_id = msg.forward_from_message_id if msg.forward_from_message_id else None
-
-    p = Product(0, title, price or 0, photo_file_id, caption, category, brand, sizes, source_chat_id, source_msg_id)
-    pid = await add_product(p)
-    cats = await get_categories()
-    await msg.reply_text(
-        f"✅ Товар добавлен (id={pid}).\nКатегория: {category} • Бренд: {brand}\n"
-        f"Цена: {price_fmt(p.price) if p.price else '—'}\nРазмеры: {sizes or '—'}\n"
-        f"Откройте категорию → бренд, чтобы увидеть карточку.",
-        reply_markup=build_categories_kb(cats)
-    )
-
-async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.channel_post
-    if not msg:
-        return
-    caption = msg.caption or msg.text or ""
-    if not caption and not msg.photo:
-        return
-    tags = parse_hashtags(caption)
-    category = tags[0] if len(tags) >= 1 else "Общее"
-    brand = tags[1] if len(tags) >= 2 else "NoBrand"
-    title = first_line(caption)
-    price = parse_price(caption) or 0
-    sizes = parse_sizes(caption)
-    photo_file_id = msg.photo[-1].file_id if msg.photo else None
-
-    p = Product(0, title, price, photo_file_id, caption, category, brand, sizes, msg.chat_id, msg.message_id)
-    pid = await add_product(p)
-    if ADMIN_CHAT_ID:
-        await context.bot.send_message(int(ADMIN_CHAT_ID), f"Импортирован пост из канала как товар id={pid} ({category}/{brand}).")
 
 # ========= CSV =========
 async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -683,7 +638,7 @@ async def successful_payment_callback(update: Update, context: ContextTypes.DEFA
     if ADMIN_CHAT_ID:
         await context.bot.send_message(int(ADMIN_CHAT_ID), f"Оплачен заказ #{order_id} от @{update.effective_user.username or update.effective_user.id} на сумму {price_fmt(total)}")
 
-# ========= MAIN (без проблем с event loop) =========
+# ========= MAIN =========
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан. Добавь его в переменные окружения.")
@@ -694,10 +649,11 @@ async def main():
     # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("export", export_csv))
+    # Импорт CSV через диалог
     import_conv = ConversationHandler(
         entry_points=[CommandHandler("import", import_csv_cmd)],
         states={IMPORT_WAIT_FILE: [MessageHandler(filters.Document.ALL, import_csv_file)]},
-        fallbacks=[CommandHandler("cancel", feedback_cancel)],
+        fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
         allow_reentry=True
     )
     app.add_handler(import_conv)
@@ -705,21 +661,13 @@ async def main():
     # Колбэки
     app.add_handler(CallbackQueryHandler(on_cb))
 
-    # Диалог обратной связи (кнопка)
-    app.add_handler(ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(f"^{re.escape(BTN_FEEDBACK)}$"), on_text)],
-        states={ASK_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_save)]},
-        fallbacks=[CommandHandler("cancel", feedback_cancel)],
-        allow_reentry=True
-    ))
-
-    # Импорт из пересланных постов (только личка)
+    # Импорт из пересланных постов (личка)
     app.add_handler(MessageHandler(
         (filters.PHOTO | filters.TEXT) & filters.FORWARDED & filters.ChatType.PRIVATE,
         import_from_forward
     ))
 
-    # Навигация (только личка)
+    # Навигация (личка)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, on_text))
 
     # Автоимпорт из каналов
@@ -733,17 +681,8 @@ async def main():
         app.add_handler(PreCheckoutQueryHandler(precheckout_callback))
         app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_callback))
 
-    # Явное управление жизненным циклом — без падений event loop
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
     print("Bot started. Press Ctrl+C to stop.")
-    try:
-        await app.updater.idle()
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
