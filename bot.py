@@ -152,7 +152,7 @@ async def init_db():
         await db.executescript(INIT_SQL)
         await db.commit()
 
-# ========= DB QUERИИ =========
+# ========= DB QUERIES =========
 async def add_product(p: Product) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
@@ -163,10 +163,9 @@ async def add_product(p: Product) -> int:
         await db.commit()
         if cur.lastrowid:
             return cur.lastrowid
-        cur2 = await db.execute(
-            "SELECT id FROM products WHERE source_chat_id IS ? AND source_msg_id IS ?",
-            (p.source_chat_id, p.source_msg_id)
-        )
+        cur2 = await db.execute("""
+            SELECT id FROM products WHERE source_chat_id IS ? AND source_msg_id IS ?
+        """, (p.source_chat_id, p.source_msg_id))
         row = await cur2.fetchone()
         return row[0] if row else 0
 
@@ -732,4 +731,14 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Фикс для Python 3.13 на Render: НЕ используем asyncio.run(...)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    # Важно: НЕ закрываем loop вручную — пусть платформа завершит процесс сама.
